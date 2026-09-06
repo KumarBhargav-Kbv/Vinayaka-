@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { LogIn, Lock, User, Sparkles } from 'lucide-react';
+import { LogIn, Lock, User } from 'lucide-react';
 
 export default function Login({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -34,11 +34,6 @@ export default function Login({ onLoginSuccess }) {
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillQuickAcc = (u, p) => {
-    setUsername(u);
-    setPassword(p);
   };
 
   return (
@@ -135,36 +130,6 @@ export default function Login({ onLoginSuccess }) {
             <LogIn size={20} /> {loading ? 'Authenticating...' : 'Login to System'}
           </button>
         </form>
-
-        {/* Quick Demo Credentials */}
-        <div style={{
-          marginTop: '1.75rem',
-          paddingTop: '1.25rem',
-          borderTop: '1px dashed #ebd7a3',
-          textAlign: 'center'
-        }}>
-          <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '0.5rem', fontWeight: '600' }}>
-            <Sparkles size={14} color="#d4af37" /> Quick Demo Accounts:
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-            <button 
-              type="button" 
-              onClick={() => fillQuickAcc('admin', 'admin123')}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.75rem', padding: '0.4rem 0.6rem' }}
-            >
-              Admin (admin/admin123)
-            </button>
-            <button 
-              type="button" 
-              onClick={() => fillQuickAcc('member', 'member123')}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.75rem', padding: '0.4rem 0.6rem' }}
-            >
-              Collector (member/member123)
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );
