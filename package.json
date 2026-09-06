@@ -5,6 +5,7 @@
   "description": "Vinayaka Chavithi Donation & Sponsorship Collection Management Web App",
   "main": "server/index.js",
   "scripts": {
+    "build": "npm install && npm --prefix client install && npm --prefix client run build",
     "start": "node server/index.js",
     "server": "node server/index.js",
     "client": "npm --prefix client run dev",
