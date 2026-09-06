@@ -94,6 +94,8 @@ router.put('/:id/reset-password', (req, res) => {
   logAudit(db, req.user.id, null, 'RESET_PASSWORD', null, { targetUserId: id });
 
   res.json({ message: `Password reset successfully for ${existing.name}` });
+});
+
 // DELETE /api/members/:id - delete member account
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
