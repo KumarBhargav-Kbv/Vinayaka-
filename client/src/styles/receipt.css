@@ -1,0 +1,174 @@
+/* Receipt Layout & Print Styles */
+.receipt-wrapper {
+  background: #ffffff;
+  padding: 1.5rem;
+  border-radius: 12px;
+  max-width: 600px;
+  margin: 0 auto;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Watermark Background */
+.receipt-wrapper::before {
+  content: '🙏 🕉️ 🙏';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-15deg);
+  font-size: 8rem;
+  opacity: 0.03;
+  pointer-events: none;
+}
+
+.receipt-header {
+  text-align: center;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px dashed #d4af37;
+}
+
+.receipt-logo {
+  max-height: 90px;
+  object-fit: contain;
+  margin-bottom: 0.5rem;
+}
+
+.receipt-group-photo {
+  max-width: 100%;
+  height: auto;
+  max-height: 180px;
+  border-radius: 8px;
+  border: 2px solid #d4af37;
+  margin: 0.75rem 0;
+}
+
+.receipt-committee-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #6b0000;
+  line-height: 1.2;
+}
+
+.receipt-festival-subtitle {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #e65100;
+  margin-top: 2px;
+}
+
+.receipt-address {
+  font-size: 0.85rem;
+  color: #555555;
+  margin-top: 4px;
+}
+
+.receipt-badge-title {
+  display: inline-block;
+  background: linear-gradient(135deg, #6b0000, #800000);
+  color: #ffe699;
+  font-weight: 800;
+  font-size: 0.9rem;
+  letter-spacing: 1px;
+  padding: 0.35rem 1rem;
+  border-radius: 20px;
+  margin: 0.75rem 0;
+  border: 1px solid #d4af37;
+}
+
+.receipt-body {
+  margin-bottom: 1.25rem;
+}
+
+.receipt-field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.5rem 0;
+  border-bottom: 1px dotted #e2d2b4;
+}
+
+.receipt-field-label {
+  font-weight: 600;
+  color: #444444;
+  font-size: 0.95rem;
+}
+
+.receipt-field-value {
+  font-weight: 700;
+  color: #111111;
+  font-size: 1.05rem;
+  text-align: right;
+}
+
+.receipt-field-value.highlight-amount {
+  font-size: 1.4rem;
+  color: #6b0000;
+  background: #fff8e7;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid #d4af37;
+}
+
+.receipt-words-box {
+  background: #fff8e7;
+  border: 1px solid #d4af37;
+  border-radius: 8px;
+  padding: 0.75rem;
+  margin: 0.75rem 0;
+  text-align: center;
+  font-weight: 700;
+  color: #6b0000;
+  font-size: 0.95rem;
+}
+
+.receipt-footer {
+  text-align: center;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 2px dashed #d4af37;
+}
+
+.receipt-thankyou {
+  font-family: 'Cinzel', serif;
+  font-weight: 700;
+  color: #e65100;
+  font-size: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.receipt-footer-text {
+  font-size: 0.75rem;
+  color: #777777;
+}
+
+.receipt-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+/* Print Only Rule */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .receipt-wrapper, .receipt-wrapper * {
+    visibility: visible;
+  }
+  .receipt-wrapper {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 100%;
+    box-shadow: none;
+    border: 1px solid #000;
+  }
+  .receipt-actions {
+    display: none !important;
+  }
+}

@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+client/node_modules/
+
+# Production build
+client/dist/
+
+# Local Database & Environment
+database.sqlite*
+.env
+
+# Uploads (Keep folder, exclude uploaded images)
+uploads/*
+!uploads/.gitkeep
+
+# System & Editor files
+.DS_Store
+Thumbs.db
+*.log
