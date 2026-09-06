@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { Users, UserPlus, KeyRound, ShieldAlert, CheckCircle, Edit3 } from 'lucide-react';
+import { Users, UserPlus, KeyRound, ShieldAlert, CheckCircle, Edit3, Trash2 } from 'lucide-react';
 
 export default function AdminMembers() {
   const { token } = useContext(AuthContext);
@@ -103,6 +103,23 @@ export default function AdminMembers() {
       alert(`Password reset successfully for ${resetModalMember.name}`);
       setResetModalMember(null);
       setNewPassword('');
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteMember = async (member) => {
+    if (!window.confirm(`Are you sure you want to delete member "${member.name}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/members/${member.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to delete member');
+
+      fetchMembers();
     } catch (err) {
       alert(err.message);
     }
@@ -265,6 +282,14 @@ export default function AdminMembers() {
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
                         >
                           <KeyRound size={14} /> Password
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteMember(m)}
+                          className="btn btn-danger"
+                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', backgroundColor: '#d32f2f', color: '#fff', border: 'none' }}
+                          title="Delete Member"
+                        >
+                          <Trash2 size={14} /> Delete
                         </button>
                       </div>
                     </td>

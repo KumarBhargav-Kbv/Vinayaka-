@@ -115,13 +115,13 @@ async function initMongo(uri) {
     const usersCount = await User.countDocuments();
     if (usersCount === 0) {
       const adminHash = bcrypt.hashSync('admin123', 10);
-      const memberHash = bcrypt.hashSync('member123', 10);
 
       await User.create([
-        { name: 'Committee Admin', username: 'admin', password_hash: adminHash, role: 'ADMIN', status: 'ACTIVE' },
-        { name: 'Ramesh (Collector)', username: 'member', password_hash: memberHash, role: 'MEMBER', status: 'ACTIVE' }
+        { name: 'Committee Admin', username: 'admin', password_hash: adminHash, role: 'ADMIN', status: 'ACTIVE' }
       ]);
-      console.log('[MongoDB Atlas] Seeded default Admin and Member accounts');
+      console.log('[MongoDB Atlas] Seeded default Admin account');
+    } else {
+      await User.deleteMany({ username: 'member' });
     }
 
     // Seed default Receipt Templates if empty

@@ -238,17 +238,14 @@ class DBWrapper {
     const userRow = this.prepare('SELECT COUNT(*) AS count FROM users').get();
     if (!userRow || userRow.count === 0) {
       const adminHash = bcrypt.hashSync('admin123', 10);
-      const memberHash = bcrypt.hashSync('member123', 10);
 
       this.prepare(`
         INSERT INTO users (name, username, password_hash, role, status)
         VALUES ('Committee Admin', 'admin', ?, 'ADMIN', 'ACTIVE')
       `).run(adminHash);
-
-      this.prepare(`
-        INSERT INTO users (name, username, password_hash, role, status)
-        VALUES ('Ramesh (Collector)', 'member', ?, 'MEMBER', 'ACTIVE')
-      `).run(memberHash);
+    } else {
+      // Remove demo account if present
+      this.prepare(`DELETE FROM users WHERE username = 'member'`).run();
     }
 
     // Seed default receipt_templates if empty

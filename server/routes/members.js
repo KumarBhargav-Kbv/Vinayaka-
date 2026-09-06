@@ -94,6 +94,23 @@ router.put('/:id/reset-password', (req, res) => {
   logAudit(db, req.user.id, null, 'RESET_PASSWORD', null, { targetUserId: id });
 
   res.json({ message: `Password reset successfully for ${existing.name}` });
+// DELETE /api/members/:id - delete member account
+router.delete('/:id', (req, res) => {
+  const { id } = req.params;
+
+  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!existing) {
+    return res.status(404).json({ error: 'Member not found' });
+  }
+
+  if (existing.id === req.user.id) {
+    return res.status(400).json({ error: 'You cannot delete your own logged-in admin account' });
+  }
+
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  logAudit(db, req.user.id, null, 'DELETE_MEMBER', existing, { id, name: existing.name });
+
+  res.json({ message: 'Member deleted successfully' });
 });
 
 module.exports = router;
