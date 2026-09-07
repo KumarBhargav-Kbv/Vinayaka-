@@ -5,6 +5,8 @@ const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
 
+const { sanitizeText } = require('../middleware/validation');
+
 // All routes here require Admin role
 router.use(authenticateToken, requireAdmin);
 
@@ -29,20 +31,23 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'Name, username, and password are required' });
   }
 
-  const cleanUsername = username.trim().toLowerCase();
+  const cleanName = sanitizeText(name);
+  const cleanUsername = sanitizeText(username).toLowerCase();
+
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(cleanUsername);
   if (existing) {
     return res.status(400).json({ error: 'Username already exists' });
   }
 
-  const passwordHash = bcrypt.hashSync(password, 10);
+  // Cost factor 12 for bcrypt
+  const passwordHash = bcrypt.hashSync(password, 12);
   const userRole = role === 'ADMIN' ? 'ADMIN' : 'MEMBER';
 
   const stmt = db.prepare(`
     INSERT INTO users (name, username, password_hash, role, status)
     VALUES (?, ?, ?, ?, 'ACTIVE')
   `);
-  const result = stmt.run(name.trim(), cleanUsername, passwordHash, userRole);
+  const result = stmt.run(cleanName, cleanUsername, passwordHash, userRole);
 
   const newUser = db.prepare('SELECT id, name, username, role, status, created_at FROM users WHERE id = ?').get(result.lastInsertRowid);
 
@@ -61,7 +66,7 @@ router.put('/:id', (req, res) => {
     return res.status(404).json({ error: 'Member not found' });
   }
 
-  const updatedName = name !== undefined ? name.trim() : existing.name;
+  const updatedName = name !== undefined ? sanitizeText(name) : existing.name;
   const updatedStatus = status !== undefined && ['ACTIVE', 'DISABLED'].includes(status) ? status : existing.status;
   const updatedRole = role !== undefined && ['ADMIN', 'MEMBER'].includes(role) ? role : existing.role;
 
@@ -88,7 +93,8 @@ router.put('/:id/reset-password', (req, res) => {
     return res.status(404).json({ error: 'Member not found' });
   }
 
-  const passwordHash = bcrypt.hashSync(newPassword, 10);
+  // Cost factor 12 for bcrypt
+  const passwordHash = bcrypt.hashSync(newPassword, 12);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
 
   logAudit(db, req.user.id, null, 'RESET_PASSWORD', null, { targetUserId: id });

@@ -5,36 +5,63 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { JWT_SECRET, authenticateToken } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const { validateLogin } = require('../middleware/validation');
+const { 
+  loginRateLimiter, 
+  getLockoutStatus, 
+  recordFailedAttempt, 
+  clearFailedAttempts 
+} = require('../middleware/lockout');
 
-// POST /api/auth/login
-router.post('/login', (req, res) => {
+// Pre-computed dummy hash for timing equalization when user doesn't exist
+const DUMMY_HASH = bcrypt.hashSync('dummy_password_for_equalization_123', 12);
+
+// Generic authentication error message (Security Requirement #4)
+const GENERIC_AUTH_ERROR = 'Incorrect email or password.';
+
+// POST /api/auth/login with Zod validation and rate limiting
+router.post('/login', loginRateLimiter, validateLogin, async (req, res) => {
   const { username, password } = req.body;
+  const cleanUsername = username.trim().toLowerCase();
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
+  // 1. Check Account Lockout status
+  const lockoutStatus = getLockoutStatus(cleanUsername);
+  if (lockoutStatus.isLocked) {
+    return res.status(429).json({ 
+      error: `Account is temporarily locked due to multiple failed login attempts. Please try again in ${lockoutStatus.minutesLeft} minutes.`,
+      lockout: true
+    });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim().toLowerCase());
+  // 2. Fetch User from Database
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(cleanUsername);
 
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid username or password' });
+  // 3. Timing Equalization: Execute bcrypt comparison regardless of user existence
+  const hashToCompare = user ? user.password_hash : DUMMY_HASH;
+  const isPasswordValid = bcrypt.compareSync(password, hashToCompare);
+
+  // 4. Verify account status & credentials
+  if (!user || !isPasswordValid || user.status === 'DISABLED') {
+    // Record failed attempt, apply progressive delay, and return generic error message
+    const updatedStatus = await recordFailedAttempt(cleanUsername);
+    
+    return res.status(401).json({ 
+      error: GENERIC_AUTH_ERROR,
+      requireCaptcha: updatedStatus.failedCount >= 3
+    });
   }
 
-  if (user.status === 'DISABLED') {
-    return res.status(403).json({ error: 'Account disabled. Please contact Admin.' });
-  }
+  // 5. Successful Login -> Clear failed attempts
+  clearFailedAttempts(cleanUsername);
 
-  const isPasswordValid = bcrypt.compareSync(password, user.password_hash);
-  if (!isPasswordValid) {
-    return res.status(401).json({ error: 'Invalid username or password' });
-  }
-
+  // 6. Sign JWT token
   const token = jwt.sign(
     { id: user.id, username: user.username, role: user.role, name: user.name },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
 
+  // Audit log (never log password!)
   logAudit(db, user.id, null, 'USER_LOGIN', null, { username: user.username, role: user.role });
 
   res.json({
