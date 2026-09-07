@@ -1,96 +1,117 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
-const { authenticateToken } = require('../middleware/auth');
+const { Donor, Transaction } = require('../mongo');
+const { authenticateToken } = require('../middleware/authMiddleware');
+
+function normalizeMobile(mobileStr) {
+  if (!mobileStr) return '';
+  let cleaned = mobileStr.replace(/\D/g, '');
+  if (cleaned.length === 12 && cleaned.startsWith('91')) {
+    cleaned = cleaned.substring(2);
+  } else if (cleaned.length === 11 && cleaned.startsWith('0')) {
+    cleaned = cleaned.substring(1);
+  }
+  return cleaned;
+}
+
+router.use(authenticateToken);
 
 // GET /api/donors/search?mobile=...
-router.get('/search', authenticateToken, (req, res) => {
-  const { mobile } = req.query;
+router.get('/search', async (req, res) => {
+  try {
+    const { mobile } = req.query;
+    if (!mobile) {
+      return res.json(null);
+    }
 
-  if (!mobile || mobile.trim().length < 4) {
-    return res.json({ found: false, donor: null, history: [] });
+    const norm = normalizeMobile(mobile);
+    if (!norm) {
+      return res.json(null);
+    }
+
+    const donor = await Donor.findOne({ normalized_mobile: norm });
+    if (!donor) {
+      return res.json(null);
+    }
+
+    // Strict access control: Collection members get necessary identification info, but not full history across all members
+    if (req.user.role === 'collection_member') {
+      return res.json({
+        _id: donor._id,
+        id: donor._id,
+        name: donor.name,
+        mobile: donor.mobile,
+        normalized_mobile: donor.normalized_mobile,
+        whatsapp_number: donor.whatsapp_number,
+        is_existing: true
+      });
+    }
+
+    res.json(donor);
+  } catch (err) {
+    console.error('Search donor error:', err);
+    res.status(500).json({ error: 'Donor search failed.' });
   }
-
-  const cleanMobile = mobile.trim();
-  const donor = db.prepare('SELECT * FROM donors WHERE mobile = ?').get(cleanMobile);
-
-  if (!donor) {
-    return res.json({ found: false, donor: null, history: [] });
-  }
-
-  const history = db.prepare(`
-    SELECT id, receipt_type, amount, sponsorship_details, payment_mode, receipt_number, collected_by, transaction_date, created_at
-    FROM transactions
-    WHERE donor_id = ?
-    ORDER BY created_at DESC
-  `).all(donor.id);
-
-  const totalDonationsCount = history.filter(h => h.receipt_type === 'donation').length;
-  const totalSponsorshipsCount = history.filter(h => h.receipt_type === 'sponsorship').length;
-  const totalAmount = history.reduce((sum, h) => sum + (Number(h.amount) || 0), 0);
-
-  res.json({
-    found: true,
-    donor: {
-      ...donor,
-      total_donations_count: totalDonationsCount,
-      total_sponsorships_count: totalSponsorshipsCount,
-      total_amount: totalAmount
-    },
-    history
-  });
 });
 
-// GET /api/donors - list/search donors for Admin / Members
-router.get('/', authenticateToken, (req, res) => {
-  const { search } = req.query;
-  let query = `
-    SELECT d.id, d.name, d.mobile, d.created_at,
-    COUNT(t.id) AS transaction_count,
-    COALESCE(SUM(CASE WHEN t.receipt_type = 'donation' THEN t.amount ELSE 0 END), 0) AS total_donated,
-    COUNT(CASE WHEN t.receipt_type = 'sponsorship' THEN 1 END) AS total_sponsorships
-    FROM donors d
-    LEFT JOIN transactions t ON d.id = t.donor_id
-  `;
-  const params = [];
+// GET /api/donors (Admin full list / search)
+router.get('/', async (req, res) => {
+  try {
+    const { query } = req.query;
+    const filter = {};
 
-  if (search && search.trim()) {
-    query += ` WHERE d.name LIKE ? OR d.mobile LIKE ?`;
-    const term = `%${search.trim()}%`;
-    params.push(term, term);
+    if (query) {
+      const cleanQuery = query.trim();
+      const norm = normalizeMobile(cleanQuery);
+      filter.$or = [
+        { name: { $regex: cleanQuery, $options: 'i' } },
+        { mobile: { $regex: cleanQuery, $options: 'i' } }
+      ];
+      if (norm) {
+        filter.$or.push({ normalized_mobile: norm });
+      }
+    }
+
+    if (req.user.role === 'collection_member') {
+      // Collection members see minimal list
+      const donors = await Donor.find(filter).limit(20).select('name mobile normalized_mobile');
+      return res.json(donors);
+    }
+
+    const donors = await Donor.find(filter).sort({ updated_at: -1 }).limit(100);
+    res.json(donors);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch donors.' });
   }
-
-  query += ` GROUP BY d.id ORDER BY d.updated_at DESC LIMIT 100`;
-
-  const donors = db.prepare(query).all(...params);
-  res.json(donors);
 });
 
-// GET /api/donors/:id - complete donor profile & history
-router.get('/:id', authenticateToken, (req, res) => {
-  const { id } = req.params;
-  const donor = db.prepare('SELECT * FROM donors WHERE id = ?').get(id);
+// GET /api/donors/:id
+router.get('/:id', async (req, res) => {
+  try {
+    const donor = await Donor.findById(req.params.id);
+    if (!donor) {
+      return res.status(404).json({ error: 'Donor not found.' });
+    }
 
-  if (!donor) {
-    return res.status(404).json({ error: 'Donor not found' });
+    const txFilter = { donor_id: donor._id, status: 'active' };
+    if (req.user.role === 'collection_member') {
+      // Member isolation requirement
+      txFilter.collection_member_id = req.user._id;
+    }
+
+    const transactions = await Transaction.find(txFilter)
+      .populate('festival_id', 'name year')
+      .populate('collection_member_id', 'name')
+      .sort({ transaction_date: -1 });
+
+    res.json({
+      donor,
+      transactions
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch donor details.' });
   }
-
-  const transactions = db.prepare(`
-    SELECT * FROM transactions WHERE donor_id = ? ORDER BY created_at DESC
-  `).all(id);
-
-  const totalDonations = transactions.filter(t => t.receipt_type === 'donation').reduce((acc, t) => acc + (t.amount || 0), 0);
-  const totalSponsorships = transactions.filter(t => t.receipt_type === 'sponsorship').length;
-
-  res.json({
-    donor,
-    summary: {
-      total_donations: totalDonations,
-      total_sponsorships: totalSponsorships,
-      total_transactions: transactions.length
-    },
-    transactions
-  });
 });
 
 module.exports = router;
+module.exports.normalizeMobile = normalizeMobile;

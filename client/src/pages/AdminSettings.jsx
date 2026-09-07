@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { Settings, Upload, Trash2, Image, Save, Check } from 'lucide-react';
+import { Settings, Upload, Trash2, Image, Save } from 'lucide-react';
 
 export default function AdminSettings() {
   const { token } = useContext(AuthContext);
@@ -8,31 +8,36 @@ export default function AdminSettings() {
   const [settings, setSettings] = useState({
     committee_name: '',
     festival_name: '',
-    festival_year: '',
+    festival_year: 2026,
     address: '',
     village_city: '',
     contact_number: '',
     whatsapp_number: '',
     email: '',
     website: '',
-    committee_members: '',
+    committee_members: [],
     thank_you_message: '',
     footer_message: '',
-    receipt_prefix: 'VC-',
-    logo: '',
-    group_photo: ''
+    receipt_number_config: {
+      common_prefix: 'VC-',
+      donation_prefix: 'DON-',
+      sponsorship_prefix: 'SPON-',
+      padding_length: 4,
+      starting_number: 1
+    },
+    logo: { url: '', enabled: true },
+    group_photo: { url: '', enabled: true }
   });
 
+  const [membersText, setMembersText] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
 
-  // Logo file upload state
   const [logoFile, setLogoFile] = useState(null);
   const [logoUploading, setLogoUploading] = useState(false);
 
-  // Group Photo upload state
   const [photoFile, setPhotoFile] = useState(null);
   const [photoUploading, setPhotoUploading] = useState(false);
 
@@ -43,19 +48,21 @@ export default function AdminSettings() {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/settings');
+      const res = await fetch('/api/settings', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       const data = await res.json();
-      if (res.ok) setSettings(data);
+      if (res.ok) {
+        setSettings(data);
+        if (data.committee_members && Array.isArray(data.committee_members)) {
+          setMembersText(data.committee_members.map(m => `${m.name} (${m.role})`).join(', '));
+        }
+      }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setSettings(prev => ({ ...prev, [name]: value }));
   };
 
   const handleSaveTextSettings = async (e) => {
@@ -65,17 +72,32 @@ export default function AdminSettings() {
     setError('');
 
     try {
+      // Parse members string into [{ name, role }]
+      const parsedMembers = membersText.split(',').map(item => {
+        const match = item.match(/(.*?)\((.*?)\)/);
+        if (match) {
+          return { name: match[1].trim(), role: match[2].trim() };
+        }
+        return { name: item.trim(), role: 'Member' };
+      }).filter(m => m.name);
+
+      const payload = {
+        ...settings,
+        committee_members: parsedMembers
+      };
+
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(settings)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to update settings');
 
+      setSettings(data);
       setSuccess('Committee settings saved successfully!');
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
@@ -85,7 +107,6 @@ export default function AdminSettings() {
     }
   };
 
-  // Upload Logo
   const handleUploadLogo = async (e) => {
     e.preventDefault();
     if (!logoFile) return;
@@ -95,7 +116,7 @@ export default function AdminSettings() {
     formData.append('logo', logoFile);
 
     try {
-      const res = await fetch('/api/settings/upload-logo', {
+      const res = await fetch('/api/settings/logo', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -103,7 +124,7 @@ export default function AdminSettings() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Logo upload failed');
 
-      setSettings(prev => ({ ...prev, logo: data.logoUrl }));
+      setSettings(prev => ({ ...prev, logo: data.logo }));
       setLogoFile(null);
       alert('Logo uploaded successfully!');
     } catch (err) {
@@ -113,27 +134,26 @@ export default function AdminSettings() {
     }
   };
 
-  // Remove Logo
   const handleRemoveLogo = async () => {
-    if (!window.confirm('Are you sure you want to remove the committee logo?')) return;
+    if (!window.confirm('Remove logo from future receipts?')) return;
     try {
-      const res = await fetch('/api/settings/logo', {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetch('/api/settings/remove-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ type: 'logo' })
       });
-      const data = await res.json();
       if (res.ok) {
-        setSettings(prev => ({ ...prev, logo: '' }));
-        alert('Logo removed successfully!');
-      } else {
-        alert(data.error || 'Failed to remove logo');
+        const data = await res.json();
+        setSettings(data);
       }
     } catch (err) {
       alert(err.message);
     }
   };
 
-  // Upload Group Photo
   const handleUploadPhoto = async (e) => {
     e.preventDefault();
     if (!photoFile) return;
@@ -143,7 +163,7 @@ export default function AdminSettings() {
     formData.append('group_photo', photoFile);
 
     try {
-      const res = await fetch('/api/settings/upload-photo', {
+      const res = await fetch('/api/settings/group-photo', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -151,7 +171,7 @@ export default function AdminSettings() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Photo upload failed');
 
-      setSettings(prev => ({ ...prev, group_photo: data.photoUrl }));
+      setSettings(prev => ({ ...prev, group_photo: data.group_photo }));
       setPhotoFile(null);
       alert('Committee group photo uploaded successfully!');
     } catch (err) {
@@ -161,20 +181,20 @@ export default function AdminSettings() {
     }
   };
 
-  // Remove Group Photo
   const handleRemovePhoto = async () => {
-    if (!window.confirm('Are you sure you want to remove the committee photo?')) return;
+    if (!window.confirm('Remove group photo from future receipts?')) return;
     try {
-      const res = await fetch('/api/settings/photo', {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetch('/api/settings/remove-image', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ type: 'group_photo' })
       });
-      const data = await res.json();
       if (res.ok) {
-        setSettings(prev => ({ ...prev, group_photo: '' }));
-        alert('Group photo removed successfully!');
-      } else {
-        alert(data.error || 'Failed to remove photo');
+        const data = await res.json();
+        setSettings(data);
       }
     } catch (err) {
       alert(err.message);
@@ -182,40 +202,40 @@ export default function AdminSettings() {
   };
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: '3rem', color: '#6b0000', fontWeight: '700' }}>Loading Committee Settings...</div>;
+    return <div style={{ textAlign: 'center', padding: '3rem', color: '#8b0000', fontWeight: '700' }}>Loading Committee Settings...</div>;
   }
 
   return (
-    <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-      <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <div className="card-header">
-          <h2 className="card-title">
-            <Settings color="#e65100" /> Admin Committee & Logo Settings
+    <div style={{ maxWidth: '850px', margin: '0 auto', padding: '16px' }}>
+      <div className="card" style={{ background: '#fff', padding: '24px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
+          <h2 style={{ color: '#8b0000', margin: 0, fontFamily: 'Cinzel, serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Settings color="#8b0000" /> Admin Branding & Committee Settings
           </h2>
-          {success && <span style={{ color: '#2e7d32', fontWeight: '700' }}>✓ {success}</span>}
+          {success && <span style={{ color: '#2e7d32', fontWeight: 'bold' }}>✓ {success}</span>}
         </div>
 
-        {error && <div style={{ background: '#ffebee', color: '#c62828', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem' }}>⚠️ {error}</div>}
+        {error && <div style={{ background: '#ffebee', color: '#c62828', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>⚠️ {error}</div>}
 
         {/* LOGO & GROUP PHOTO MEDIA MANAGEMENT SECTION */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '24px' }}>
           {/* Logo Card */}
-          <div style={{ background: '#fff8e7', padding: '1rem', borderRadius: '10px', border: '1px solid #ebd7a3' }}>
-            <h4 style={{ color: '#6b0000', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ background: '#fff8e7', padding: '16px', borderRadius: '10px', border: '1px solid #ebd7a3' }}>
+            <h4 style={{ color: '#8b0000', margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Image size={18} /> Committee Logo
             </h4>
 
-            {settings.logo ? (
-              <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
-                <img src={settings.logo} alt="Logo" style={{ maxHeight: '90px', objectFit: 'contain' }} />
-                <div style={{ marginTop: '0.5rem' }}>
-                  <button onClick={handleRemoveLogo} className="btn btn-danger" style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>
-                    <Trash2 size={14} /> Remove Logo
+            {settings.logo?.url ? (
+              <div style={{ textAlign: 'center', marginBottom: '12px' }}>
+                <img src={settings.logo.url} alt="Logo" style={{ maxHeight: '90px', objectFit: 'contain' }} />
+                <div style={{ marginTop: '8px' }}>
+                  <button onClick={handleRemoveLogo} style={{ background: '#c62828', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' }}>
+                    <Trash2 size={14} style={{ display: 'inline', marginRight: 4 }} /> Remove Logo
                   </button>
                 </div>
               </div>
             ) : (
-              <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '0.5rem' }}>No logo currently uploaded.</p>
+              <p style={{ fontSize: '0.85rem', color: '#888', marginBottom: '8px' }}>No logo currently uploaded.</p>
             )}
 
             <form onSubmit={handleUploadLogo}>
@@ -223,31 +243,31 @@ export default function AdminSettings() {
                 type="file" 
                 accept="image/png, image/jpeg, image/jpg, image/webp" 
                 onChange={(e) => setLogoFile(e.target.files[0])}
-                style={{ fontSize: '0.8rem', width: '100%', marginBottom: '0.5rem' }}
+                style={{ fontSize: '0.8rem', width: '100%', marginBottom: '8px' }}
               />
-              <button type="submit" className="btn btn-secondary btn-block" disabled={!logoFile || logoUploading} style={{ fontSize: '0.8rem' }}>
-                <Upload size={14} /> {logoUploading ? 'Uploading...' : 'Upload Logo'}
+              <button type="submit" disabled={!logoFile || logoUploading} style={{ width: '100%', background: '#8b0000', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+                <Upload size={14} style={{ display: 'inline', marginRight: 4 }} /> {logoUploading ? 'Uploading...' : 'Upload Logo'}
               </button>
             </form>
           </div>
 
           {/* Group Photo Card */}
-          <div style={{ background: '#fff8e7', padding: '1rem', borderRadius: '10px', border: '1px solid #ebd7a3' }}>
-            <h4 style={{ color: '#6b0000', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div style={{ background: '#fff8e7', padding: '16px', borderRadius: '10px', border: '1px solid #ebd7a3' }}>
+            <h4 style={{ color: '#8b0000', margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Image size={18} /> Committee Group Photo
             </h4>
 
-            {settings.group_photo ? (
-              <div style={{ textAlign: 'center', marginBottom: '0.75rem' }}>
-                <img src={settings.group_photo} alt="Group Photo" style={{ maxHeight: '90px', width: '100%', objectFit: 'cover', borderRadius: '6px' }} />
-                <div style={{ marginTop: '0.5rem' }}>
-                  <button onClick={handleRemovePhoto} className="btn btn-danger" style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem' }}>
-                    <Trash2 size={14} /> Remove Photo
+            {settings.group_photo?.url ? (
+              <div style={{ textAlign: 'center', marginBottom: '12px' }}>
+                <img src={settings.group_photo.url} alt="Group Photo" style={{ maxHeight: '90px', width: '100%', objectFit: 'cover', borderRadius: '6px' }} />
+                <div style={{ marginTop: '8px' }}>
+                  <button onClick={handleRemovePhoto} style={{ background: '#c62828', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem' }}>
+                    <Trash2 size={14} style={{ display: 'inline', marginRight: 4 }} /> Remove Photo
                   </button>
                 </div>
               </div>
             ) : (
-              <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '0.5rem' }}>No photo currently uploaded.</p>
+              <p style={{ fontSize: '0.85rem', color: '#888', marginBottom: '8px' }}>No group photo uploaded.</p>
             )}
 
             <form onSubmit={handleUploadPhoto}>
@@ -255,10 +275,10 @@ export default function AdminSettings() {
                 type="file" 
                 accept="image/png, image/jpeg, image/jpg, image/webp" 
                 onChange={(e) => setPhotoFile(e.target.files[0])}
-                style={{ fontSize: '0.8rem', width: '100%', marginBottom: '0.5rem' }}
+                style={{ fontSize: '0.8rem', width: '100%', marginBottom: '8px' }}
               />
-              <button type="submit" className="btn btn-secondary btn-block" disabled={!photoFile || photoUploading} style={{ fontSize: '0.8rem' }}>
-                <Upload size={14} /> {photoUploading ? 'Uploading...' : 'Upload Group Photo'}
+              <button type="submit" disabled={!photoFile || photoUploading} style={{ width: '100%', background: '#8b0000', color: '#fff', border: 'none', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}>
+                <Upload size={14} style={{ display: 'inline', marginRight: 4 }} /> {photoUploading ? 'Uploading...' : 'Upload Group Photo'}
               </button>
             </form>
           </div>
@@ -266,104 +286,184 @@ export default function AdminSettings() {
 
         {/* COMMITTEE TEXT INFORMATION FORM */}
         <form onSubmit={handleSaveTextSettings}>
-          <h3 style={{ color: '#6b0000', borderBottom: '2px solid #ebd7a3', paddingBottom: '0.4rem', marginBottom: '1rem' }}>
-            📜 Committee Details & Receipt Prefix
+          <h3 style={{ color: '#8b0000', borderBottom: '2px solid #ebd7a3', paddingBottom: '6px', marginTop: 0, marginBottom: '16px' }}>
+            📜 Committee Details & Receipt Prefix Configuration
           </h3>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className="form-group">
-              <label className="form-label">Committee Name *</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Committee Name *</label>
               <input 
-                type="text" name="committee_name" className="form-control"
-                value={settings.committee_name} onChange={handleChange} required 
+                type="text"
+                value={settings.committee_name} 
+                onChange={(e) => setSettings({ ...settings, committee_name: e.target.value })} 
+                required 
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Receipt Prefix * (e.g. VC- or DON-)</label>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Festival Name *</label>
               <input 
-                type="text" name="receipt_prefix" className="form-control"
-                value={settings.receipt_prefix} onChange={handleChange} required 
-                style={{ fontWeight: '700', color: '#e65100' }}
+                type="text" 
+                value={settings.festival_name} 
+                onChange={(e) => setSettings({ ...settings, festival_name: e.target.value })} 
+                required 
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Festival Name *</label>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Festival Year *</label>
               <input 
-                type="text" name="festival_name" className="form-control"
-                value={settings.festival_name} onChange={handleChange} required 
+                type="number" 
+                value={settings.festival_year} 
+                onChange={(e) => setSettings({ ...settings, festival_year: Number(e.target.value) })} 
+                required 
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Festival Year *</label>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Address / Street</label>
               <input 
-                type="text" name="festival_year" className="form-control"
-                value={settings.festival_year} onChange={handleChange} required 
+                type="text" 
+                value={settings.address} 
+                onChange={(e) => setSettings({ ...settings, address: e.target.value })} 
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Address / Street</label>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Village / City</label>
               <input 
-                type="text" name="address" className="form-control"
-                value={settings.address} onChange={handleChange} 
+                type="text" 
+                value={settings.village_city} 
+                onChange={(e) => setSettings({ ...settings, village_city: e.target.value })} 
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
               />
             </div>
 
-            <div className="form-group">
-              <label className="form-label">Village / City</label>
+            <div>
+              <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Contact Number</label>
               <input 
-                type="text" name="village_city" className="form-control"
-                value={settings.village_city} onChange={handleChange} 
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Contact Number</label>
-              <input 
-                type="text" name="contact_number" className="form-control"
-                value={settings.contact_number} onChange={handleChange} 
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">WhatsApp Official Number</label>
-              <input 
-                type="text" name="whatsapp_number" className="form-control"
-                value={settings.whatsapp_number} onChange={handleChange} 
+                type="text" 
+                value={settings.contact_number} 
+                onChange={(e) => setSettings({ ...settings, contact_number: e.target.value })} 
+                style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
               />
             </div>
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Committee Office Bearers / Key Members</label>
+          {/* Receipt Number Config Box */}
+          <div style={{ background: '#f5f5f5', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid #e0e0e0' }}>
+            <h4 style={{ color: '#8b0000', margin: '0 0 12px 0' }}>Receipt Numbering Format Config</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+              <div>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Common Prefix</label>
+                <input 
+                  type="text" 
+                  value={settings.receipt_number_config?.common_prefix || 'VC-'}
+                  onChange={(e) => setSettings({
+                    ...settings,
+                    receipt_number_config: { ...settings.receipt_number_config, common_prefix: e.target.value }
+                  })}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', fontWeight: 'bold' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Donation Prefix</label>
+                <input 
+                  type="text" 
+                  value={settings.receipt_number_config?.donation_prefix || 'DON-'}
+                  onChange={(e) => setSettings({
+                    ...settings,
+                    receipt_number_config: { ...settings.receipt_number_config, donation_prefix: e.target.value }
+                  })}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', fontWeight: 'bold' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Sponsorship Prefix</label>
+                <input 
+                  type="text" 
+                  value={settings.receipt_number_config?.sponsorship_prefix || 'SPON-'}
+                  onChange={(e) => setSettings({
+                    ...settings,
+                    receipt_number_config: { ...settings.receipt_number_config, sponsorship_prefix: e.target.value }
+                  })}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc', fontWeight: 'bold' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Padding Digits</label>
+                <input 
+                  type="number" 
+                  value={settings.receipt_number_config?.padding_length || 4}
+                  onChange={(e) => setSettings({
+                    ...settings,
+                    receipt_number_config: { ...settings.receipt_number_config, padding_length: Number(e.target.value) }
+                  })}
+                  style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid #ccc' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Committee Key Members</label>
             <input 
-              type="text" name="committee_members" className="form-control"
-              value={settings.committee_members} onChange={handleChange}
+              type="text" 
+              value={membersText} 
+              onChange={(e) => setMembersText(e.target.value)}
               placeholder="e.g. Sri R. Sharma (President), Sri K. Varma (Secretary)"
+              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
             />
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Thank You Message (Shown on Receipts)</label>
+          <div style={{ marginBottom: '16px' }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Thank You Message (Receipt Footer Header)</label>
             <input 
-              type="text" name="thank_you_message" className="form-control"
-              value={settings.thank_you_message} onChange={handleChange} 
+              type="text" 
+              value={settings.thank_you_message} 
+              onChange={(e) => setSettings({ ...settings, thank_you_message: e.target.value })} 
+              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
             />
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Footer Note (Shown on Receipts)</label>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontWeight: 600, marginBottom: '4px', fontSize: '0.9rem' }}>Footer Message (Computer Generated Notice)</label>
             <input 
-              type="text" name="footer_message" className="form-control"
-              value={settings.footer_message} onChange={handleChange} 
+              type="text" 
+              value={settings.footer_message} 
+              onChange={(e) => setSettings({ ...settings, footer_message: e.target.value })} 
+              style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
             />
           </div>
 
-          <button type="submit" className="btn btn-primary btn-block btn-lg" disabled={saving} style={{ marginTop: '1rem' }}>
-            <Save size={20} /> {saving ? 'Saving...' : 'Save All Committee Information'}
+          <button 
+            type="submit" 
+            disabled={saving}
+            style={{
+              width: '100%',
+              background: '#8b0000',
+              color: '#fff',
+              border: 'none',
+              padding: '14px',
+              borderRadius: '8px',
+              fontWeight: 'bold',
+              fontSize: '1.05rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px'
+            }}
+          >
+            <Save size={20} /> {saving ? 'Saving Settings...' : 'Save All Committee Settings'}
           </button>
         </form>
       </div>

@@ -10,7 +10,8 @@ import {
   FileText, 
   LogOut,
   UserCheck,
-  MessageSquare
+  MessageSquare,
+  Calendar
 } from 'lucide-react';
 
 export default function Navbar({ currentPath, setCurrentPath }) {
@@ -51,6 +52,13 @@ export default function Navbar({ currentPath, setCurrentPath }) {
                   onClick={() => navigate('/collection')}
                 >
                   <PlusCircle size={18} /> New Collection
+                </button>
+
+                <button 
+                  className={`nav-link ${currentPath === '/admin/festivals' ? 'active' : ''}`}
+                  onClick={() => navigate('/admin/festivals')}
+                >
+                  <Calendar size={18} /> Festival Year
                 </button>
 
                 <button 
@@ -115,7 +123,7 @@ export default function Navbar({ currentPath, setCurrentPath }) {
 
             <div className="user-badge">
               <span>{user.name}</span>
-              <span className="role-tag">{user.role}</span>
+              <span className="role-tag" style={{ textTransform: 'uppercase' }}>{user.role}</span>
               <button 
                 onClick={logout} 
                 style={{ background: 'none', border: 'none', color: '#ffb3b3', cursor: 'pointer', marginLeft: '6px', display: 'flex', alignItems: 'center' }}

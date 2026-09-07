@@ -9,7 +9,6 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     if (token) {
-      // Verify token
       fetch('/api/auth/me', {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -41,6 +40,8 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
+  const isAdmin = user?.role?.toLowerCase() === 'admin';
+
   return (
     <AuthContext.Provider
       value={{
@@ -49,7 +50,7 @@ export const AuthProvider = ({ children }) => {
         loading,
         login,
         logout,
-        isAdmin: user?.role === 'ADMIN'
+        isAdmin
       }}
     >
       {children}

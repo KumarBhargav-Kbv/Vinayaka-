@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
 import DonorLookupModal from '../components/DonorLookupModal';
-import { PlusCircle, Search, User, Phone, CreditCard, Calendar, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { PlusCircle, User, Phone, CreditCard, CheckCircle2 } from 'lucide-react';
 
 export default function MemberCollection({ onTransactionCreated }) {
   const { user, token } = useContext(AuthContext);
@@ -10,8 +10,9 @@ export default function MemberCollection({ onTransactionCreated }) {
   const [mobile, setMobile] = useState('');
   const [receiptType, setReceiptType] = useState('donation'); // 'donation' or 'sponsorship'
   const [amount, setAmount] = useState('');
+  const [sponsorshipCategory, setSponsorshipCategory] = useState('Annadanam Sponsorship');
   const [sponsorshipDetails, setSponsorshipDetails] = useState('');
-  const [paymentMode, setPaymentMode] = useState('Cash');
+  const [paymentMode, setPaymentMode] = useState('cash');
   const [transactionId, setTransactionId] = useState('');
   const [transactionDate, setTransactionDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -19,7 +20,6 @@ export default function MemberCollection({ onTransactionCreated }) {
   const [searchingDonor, setSearchingDonor] = useState(false);
   const [foundDonorData, setFoundDonorData] = useState(null);
   const [showLookupModal, setShowLookupModal] = useState(false);
-  const [selectedDonorId, setSelectedDonorId] = useState(null);
 
   const [amountWords, setAmountWords] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -68,12 +68,12 @@ export default function MemberCollection({ onTransactionCreated }) {
   };
 
   useEffect(() => {
-    if (receiptType === 'donation' && amount) {
+    if (amount) {
       setAmountWords(convertNumberToWords(amount));
     } else {
       setAmountWords('');
     }
-  }, [amount, receiptType]);
+  }, [amount]);
 
   // Automatic duplicate donor check when mobile reaches 10 digits
   const handleMobileChange = (e) => {
@@ -94,22 +94,18 @@ export default function MemberCollection({ onTransactionCreated }) {
       const res = await fetch(`/api/donors/search?mobile=${mob}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const data = await res.json();
-      if (data.found) {
-        setFoundDonorData(data);
-        setShowLookupModal(true);
+      if (res.ok) {
+        const data = await res.json();
+        if (data) {
+          setFoundDonorData(data);
+          if (!donorName) setDonorName(data.name);
+        }
       }
     } catch (err) {
       console.error('Donor search failed', err);
     } finally {
       setSearchingDonor(false);
     }
-  };
-
-  const confirmExistingDonor = (donor) => {
-    setDonorName(donor.name);
-    setSelectedDonorId(donor.id);
-    setShowLookupModal(false);
   };
 
   const handleSubmit = async (e) => {
@@ -122,10 +118,11 @@ export default function MemberCollection({ onTransactionCreated }) {
         donor_name: donorName,
         mobile,
         receipt_type: receiptType,
-        amount: receiptType === 'donation' ? Number(amount) : 0,
+        amount: Number(amount),
+        sponsorship_category: receiptType === 'sponsorship' ? sponsorshipCategory : '',
         sponsorship_details: receiptType === 'sponsorship' ? sponsorshipDetails : '',
         payment_mode: paymentMode,
-        transaction_id: transactionId,
+        payment_transaction_id: transactionId,
         transaction_date: transactionDate
       };
 
@@ -144,7 +141,7 @@ export default function MemberCollection({ onTransactionCreated }) {
       }
 
       // Success - Trigger view receipt
-      onTransactionCreated(data.transaction.id);
+      onTransactionCreated(data.transaction._id || data.transaction.id);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -153,20 +150,20 @@ export default function MemberCollection({ onTransactionCreated }) {
   };
 
   return (
-    <div style={{ maxWidth: '650px', margin: '0 auto' }}>
+    <div style={{ maxWidth: '650px', margin: '0 auto', padding: '16px' }}>
       {/* Duplicate Donor Modal */}
       {showLookupModal && foundDonorData && (
         <DonorLookupModal 
           donorData={foundDonorData}
-          onConfirm={confirmExistingDonor}
+          onConfirm={(d) => { setDonorName(d.name); setShowLookupModal(false); }}
           onClose={() => setShowLookupModal(false)}
         />
       )}
 
-      <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">
-            <PlusCircle color="#e65100" /> New Collection Entry
+      <div className="card" style={{ background: '#fff', borderRadius: '12px', padding: '24px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '8px' }}>
+          <h2 style={{ color: '#8b0000', margin: 0, fontFamily: 'Cinzel, serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <PlusCircle color="#8b0000" /> New Collection Entry
           </h2>
           <span style={{ fontSize: '0.85rem', color: '#665647', background: '#fff8e7', padding: '4px 10px', borderRadius: '12px', border: '1px solid #ebd7a3' }}>
             Collected By: <strong>{user?.name}</strong>
@@ -180,32 +177,24 @@ export default function MemberCollection({ onTransactionCreated }) {
         )}
 
         {/* Existing Donor Banner Notification */}
-        {foundDonorData && !showLookupModal && (
-          <div className="donor-found-banner">
+        {foundDonorData && (
+          <div style={{ background: '#e8f5e9', border: '1px solid #c8e6c9', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <strong style={{ color: '#6b0000', fontSize: '0.95rem' }}>✓ Existing Donor Verified</strong>
-                <p style={{ fontSize: '0.8rem', color: '#555', margin: '2px 0 0 0' }}>
-                  {foundDonorData.donor.name} (Total Past: ₹{foundDonorData.donor.total_amount?.toLocaleString('en-IN')})
+                <strong style={{ color: '#2e7d32', fontSize: '0.95rem' }}>✓ EXISTING DONOR FOUND</strong>
+                <p style={{ fontSize: '0.85rem', color: '#333', margin: '2px 0 0 0' }}>
+                  {foundDonorData.name} ({foundDonorData.mobile})
                 </p>
               </div>
-              <button 
-                type="button"
-                onClick={() => setShowLookupModal(true)}
-                className="btn btn-secondary"
-                style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
-              >
-                View History
-              </button>
             </div>
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
-          {/* Mobile Number & Duplicate Donor Search */}
-          <div className="form-group">
-            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Phone size={18} color="#e65100" /> Mobile Number *
+          {/* Mobile Number & Search */}
+          <div className="form-group" style={{ marginBottom: '16px' }}>
+            <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>
+              <Phone size={16} color="#8b0000" style={{ display: 'inline', marginRight: '4px' }} /> Mobile Number *
             </label>
             <div style={{ position: 'relative' }}>
               <input 
@@ -217,44 +206,64 @@ export default function MemberCollection({ onTransactionCreated }) {
                 value={mobile}
                 onChange={handleMobileChange}
                 required
+                style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #ccc', fontSize: '1.1rem' }}
               />
               {searchingDonor && (
-                <span style={{ position: 'absolute', right: '12px', top: '12px', fontSize: '0.8rem', color: '#e65100' }}>
-                  Checking...
+                <span style={{ position: 'absolute', right: '12px', top: '12px', fontSize: '0.8rem', color: '#8b0000' }}>
+                  Searching...
                 </span>
               )}
             </div>
           </div>
 
           {/* Donor Name */}
-          <div className="form-group">
-            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <User size={18} color="#e65100" /> Donor / Devotee Name *
+          <div className="form-group" style={{ marginBottom: '16px' }}>
+            <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>
+              <User size={16} color="#8b0000" style={{ display: 'inline', marginRight: '4px' }} /> Donor / Devotee Name *
             </label>
             <input 
               type="text"
               className="form-control"
-              placeholder="Enter full name"
+              placeholder="Enter devotee name"
               value={donorName}
               onChange={(e) => setDonorName(e.target.value)}
               required
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #ccc', fontSize: '1rem' }}
             />
           </div>
 
           {/* Receipt Type Toggle Switch */}
-          <div className="form-group">
-            <label className="form-label">Receipt Type *</label>
-            <div className="receipt-type-toggle">
+          <div className="form-group" style={{ marginBottom: '20px' }}>
+            <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>Receipt Type *</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <button
                 type="button"
-                className={`toggle-btn ${receiptType === 'donation' ? 'active' : ''}`}
+                style={{
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: receiptType === 'donation' ? '2px solid #8b0000' : '1px solid #ccc',
+                  background: receiptType === 'donation' ? '#8b0000' : '#f9f9f9',
+                  color: receiptType === 'donation' ? '#fff' : '#333',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  fontSize: '1rem'
+                }}
                 onClick={() => setReceiptType('donation')}
               >
                 ₹ DONATION
               </button>
               <button
                 type="button"
-                className={`toggle-btn ${receiptType === 'sponsorship' ? 'active' : ''}`}
+                style={{
+                  padding: '12px',
+                  borderRadius: '8px',
+                  border: receiptType === 'sponsorship' ? '2px solid #8b0000' : '1px solid #ccc',
+                  background: receiptType === 'sponsorship' ? '#8b0000' : '#f9f9f9',
+                  color: receiptType === 'sponsorship' ? '#fff' : '#333',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  fontSize: '1rem'
+                }}
                 onClick={() => setReceiptType('sponsorship')}
               >
                 🚩 SPONSORSHIP
@@ -263,104 +272,138 @@ export default function MemberCollection({ onTransactionCreated }) {
           </div>
 
           {/* DYNAMIC FIELD SWITCHING */}
-          {receiptType === 'donation' ? (
-            <div className="form-group" style={{ background: '#fffdf5', padding: '1rem', borderRadius: '10px', border: '1.5px solid #ebd7a3' }}>
-              <label className="form-label" style={{ fontSize: '1.05rem', color: '#6b0000' }}>
-                Amount ₹ * (Numeric Only)
-              </label>
-              <input 
-                type="number"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                className="form-control"
-                placeholder="e.g. 1500"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ''))}
-                required={receiptType === 'donation'}
-                style={{ fontSize: '1.4rem', fontWeight: '700', color: '#6b0000' }}
-              />
+          {receiptType === 'sponsorship' && (
+            <>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>Sponsorship Category *</label>
+                <select
+                  value={sponsorshipCategory}
+                  onChange={(e) => setSponsorshipCategory(e.target.value)}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #ccc', fontSize: '1rem' }}
+                >
+                  <option value="Annadanam Sponsorship">Annadanam Sponsorship</option>
+                  <option value="Ganesh Idol Sponsorship">Ganesh Idol Sponsorship</option>
+                  <option value="Decoration Sponsorship">Decoration Sponsorship</option>
+                  <option value="Cultural Program Sponsorship">Cultural Program Sponsorship</option>
+                  <option value="Pooja / Archana Sponsorship">Pooja / Archana Sponsorship</option>
+                  <option value="Other Sponsorship">Other Sponsorship</option>
+                </select>
+              </div>
 
-              {/* Mobile Quick Amount Selector Buttons */}
-              <div className="quick-amounts-grid">
-                <button type="button" className="quick-amt-btn" onClick={() => setAmount(prev => String((Number(prev) || 0) + 100))}>+₹100</button>
-                <button type="button" className="quick-amt-btn" onClick={() => setAmount(prev => String((Number(prev) || 0) + 500))}>+₹500</button>
-                <button type="button" className="quick-amt-btn" onClick={() => setAmount(prev => String((Number(prev) || 0) + 1000))}>+₹1k</button>
-                <button type="button" className="quick-amt-btn" onClick={() => setAmount(prev => String((Number(prev) || 0) + 2000))}>+₹2k</button>
-                <button type="button" className="quick-amt-btn" onClick={() => setAmount(prev => String((Number(prev) || 0) + 5000))}>+₹5k</button>
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>Sponsorship Details</label>
+                <input 
+                  type="text"
+                  placeholder="e.g. 500 Food Packets / Flower Garland Decoration"
+                  value={sponsorshipDetails}
+                  onChange={(e) => setSponsorshipDetails(e.target.value)}
+                  style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #ccc', fontSize: '1rem' }}
+                />
               </div>
-              {amountWords && (
-                <div className="amount-words-box">
-                  <strong>Amount in Words:</strong> {amountWords}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="form-group" style={{ background: '#fffdf5', padding: '1rem', borderRadius: '10px', border: '1.5px solid #ebd7a3' }}>
-              <label className="form-label" style={{ fontSize: '1.05rem', color: '#2e7d32' }}>
-                Sponsorship Details * (Text Input)
-              </label>
-              <input 
-                type="text"
-                className="form-control"
-                placeholder="e.g. Ganesh Idol / Annadanam / Decoration Sponsorship"
-                value={sponsorshipDetails}
-                onChange={(e) => setSponsorshipDetails(e.target.value)}
-                required={receiptType === 'sponsorship'}
-                style={{ fontSize: '1.1rem', fontWeight: '600' }}
-              />
-              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '4px' }}>
-                Examples: Ganesh Idol Sponsorship, Annadanam Sponsorship, Cultural Program Sponsorship
-              </div>
-            </div>
+            </>
           )}
 
+          {/* Amount Field */}
+          <div className="form-group" style={{ background: '#fffdf5', padding: '16px', borderRadius: '10px', border: '1.5px solid #ebd7a3', marginBottom: '16px' }}>
+            <label className="form-label" style={{ display: 'block', fontWeight: '600', color: '#8b0000', marginBottom: '6px', fontSize: '1.05rem' }}>
+              Collection Amount ₹ * (Numbers Only)
+            </label>
+            <input 
+              type="number"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="form-control"
+              placeholder="e.g. 1500"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ''))}
+              required
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #d4af37', fontSize: '1.4rem', fontWeight: '700', color: '#8b0000' }}
+            />
+
+            {/* Quick amount shortcuts */}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+              {[500, 1000, 2000, 5000, 10000].map(val => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setAmount(String((Number(amount) || 0) + val))}
+                  style={{ background: '#fff', border: '1px solid #d4af37', color: '#8b0000', padding: '6px 12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                >
+                  +₹{val}
+                </button>
+              ))}
+            </div>
+
+            {amountWords && (
+              <div style={{ marginTop: '10px', padding: '8px', background: '#fff8e7', borderRadius: '6px', color: '#8b0000', fontSize: '0.9rem', fontWeight: 600 }}>
+                Amount in Words: {amountWords}
+              </div>
+            )}
+          </div>
+
           {/* Payment Mode */}
-          <div className="form-group">
-            <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <CreditCard size={18} color="#e65100" /> Payment Mode *
+          <div className="form-group" style={{ marginBottom: '16px' }}>
+            <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>
+              <CreditCard size={16} color="#8b0000" style={{ display: 'inline', marginRight: '4px' }} /> Payment Mode *
             </label>
             <select
               className="form-control"
               value={paymentMode}
               onChange={(e) => setPaymentMode(e.target.value)}
+              style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #ccc', fontSize: '1rem' }}
             >
-              <option value="Cash">Cash</option>
-              <option value="UPI">UPI (PhonePe / Google Pay / Paytm)</option>
-              <option value="Bank Transfer">Bank Transfer / NEFT</option>
-              <option value="Other">Other</option>
+              <option value="cash">Cash</option>
+              <option value="upi">UPI (PhonePe / Google Pay / Paytm)</option>
+              <option value="bank_transfer">Bank Transfer / NEFT</option>
+              <option value="other">Other</option>
             </select>
           </div>
 
-          {/* Optional Transaction ID & Date */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          {/* Transaction ID & Date */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
             <div className="form-group">
-              <label className="form-label">Transaction / Reference ID</label>
+              <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>Payment Transaction ID</label>
               <input 
                 type="text"
                 className="form-control"
-                placeholder="UPI / Ref No. (Optional)"
+                placeholder="UPI / Ref No."
                 value={transactionId}
                 onChange={(e) => setTransactionId(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
               />
             </div>
             <div className="form-group">
-              <label className="form-label">Date</label>
+              <label className="form-label" style={{ display: 'block', fontWeight: '600', marginBottom: '6px' }}>Date</label>
               <input 
                 type="date"
                 className="form-control"
                 value={transactionDate}
                 onChange={(e) => setTransactionDate(e.target.value)}
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
               />
             </div>
           </div>
 
           <button 
             type="submit" 
-            className="btn btn-primary btn-block btn-lg"
             disabled={submitting}
-            style={{ marginTop: '1rem' }}
+            style={{
+              width: '100%',
+              background: '#8b0000',
+              color: '#fff',
+              border: 'none',
+              padding: '14px',
+              borderRadius: '8px',
+              fontWeight: 'bold',
+              fontSize: '1.1rem',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px'
+            }}
           >
-            <CheckCircle2 size={22} /> {submitting ? 'Generating Receipt...' : 'Save Collection & Print Receipt'}
+            <CheckCircle2 size={20} /> {submitting ? 'Generating Receipt...' : 'Save Collection & Generate Receipt'}
           </button>
         </form>
       </div>

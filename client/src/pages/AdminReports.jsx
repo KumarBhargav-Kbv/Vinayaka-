@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { FileText, Download, Filter, Eye, Users } from 'lucide-react';
+import { Download, Filter, Eye, Users } from 'lucide-react';
 
 export default function AdminReports({ onViewReceipt }) {
   const { token } = useContext(AuthContext);
 
   // Filters
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [festivals, setFestivals] = useState([]);
+  const [selectedFestival, setSelectedFestival] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
   const [receiptType, setReceiptType] = useState('');
   const [paymentMode, setPaymentMode] = useState('');
   const [selectedMember, setSelectedMember] = useState('');
 
   // Data
   const [members, setMembers] = useState([]);
-  const [memberSummary, setMemberSummary] = useState([]);
+  const [memberWiseData, setMemberWiseData] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -23,40 +25,59 @@ export default function AdminReports({ onViewReceipt }) {
   }, []);
 
   useEffect(() => {
-    fetchFilteredTransactions();
-  }, [dateFrom, dateTo, receiptType, paymentMode, selectedMember]);
+    fetchFilteredData();
+  }, [selectedFestival, startDate, endDate, receiptType, paymentMode, selectedMember]);
 
   const fetchInitialData = async () => {
     try {
-      // 1. Members list for dropdown
-      const mRes = await fetch('/api/members', { headers: { Authorization: `Bearer ${token}` } });
-      const mData = await mRes.json();
-      if (mRes.ok) setMembers(mData);
+      // Festivals dropdown
+      const fRes = await fetch('/api/festivals', { headers: { Authorization: `Bearer ${token}` } });
+      if (fRes.ok) {
+        const fData = await fRes.json();
+        setFestivals(fData);
+        const active = fData.find(f => f.status === 'active');
+        if (active) setSelectedFestival(active._id);
+      }
 
-      // 2. Member summary report
-      const sRes = await fetch('/api/reports/member-summary', { headers: { Authorization: `Bearer ${token}` } });
-      const sData = await sRes.json();
-      if (sRes.ok) setMemberSummary(sData);
+      // Members dropdown
+      const mRes = await fetch('/api/members', { headers: { Authorization: `Bearer ${token}` } });
+      if (mRes.ok) {
+        const mData = await mRes.json();
+        setMembers(mData);
+      }
     } catch (err) {
       console.error(err);
     }
   };
 
-  const fetchFilteredTransactions = async () => {
+  const fetchFilteredData = async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (dateFrom) params.append('date_from', dateFrom);
-      if (dateTo) params.append('date_to', dateTo);
+      if (selectedFestival) params.append('festival_id', selectedFestival);
+      if (startDate) params.append('start_date', startDate);
+      if (endDate) params.append('end_date', endDate);
       if (receiptType) params.append('receipt_type', receiptType);
       if (paymentMode) params.append('payment_mode', paymentMode);
       if (selectedMember) params.append('member_id', selectedMember);
 
-      const res = await fetch(`/api/transactions?${params.toString()}`, {
+      // 1. Member-wise summary aggregation
+      const mwRes = await fetch(`/api/reports/member-wise?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const data = await res.json();
-      if (res.ok) setTransactions(data);
+      if (mwRes.ok) {
+        const mwData = await mwRes.json();
+        setMemberWiseData(mwData);
+      }
+
+      // 2. Transactions list
+      const txRes = await fetch(`/api/transactions?${params.toString()}&limit=100`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (txRes.ok) {
+        const txData = await txRes.json();
+        setTransactions(txData.transactions || []);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -66,47 +87,50 @@ export default function AdminReports({ onViewReceipt }) {
 
   const handleExportCSV = () => {
     const params = new URLSearchParams();
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
+    if (selectedFestival) params.append('festival_id', selectedFestival);
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
     if (receiptType) params.append('receipt_type', receiptType);
     if (paymentMode) params.append('payment_mode', paymentMode);
     if (selectedMember) params.append('member_id', selectedMember);
 
-    window.open(`/api/reports/export?${params.toString()}`, '_blank');
+    window.open(`/api/reports/export-csv?${params.toString()}`, '_blank');
   };
 
   const totalFilteredAmount = transactions.reduce((acc, t) => acc + (t.amount || 0), 0);
 
   return (
-    <div>
+    <div style={{ padding: '16px', maxWidth: '1200px', margin: '0 auto' }}>
       {/* SECTION 1: MEMBER-WISE COLLECTION SUMMARY REPORT */}
-      <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <div className="card-header">
-          <h3 className="card-title">
-            <Users color="#e65100" /> Member-Wise Collection Summary
-          </h3>
-        </div>
+      <div className="card" style={{ background: '#fff', padding: '20px', borderRadius: '12px', marginBottom: '24px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
+        <h3 style={{ color: '#8b0000', margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <Users color="#8b0000" size={20} /> Member-Wise Collection Performance
+        </h3>
 
-        <div className="table-responsive">
-          <table className="table">
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
             <thead>
-              <tr style={{ background: '#fff8e7' }}>
-                <th>Member Name</th>
-                <th>Username</th>
-                <th>Donations Count</th>
-                <th>Sponsorships Count</th>
-                <th>Total Collection (INR)</th>
+              <tr style={{ background: '#fff8e7', borderBottom: '2px solid #ebd7a3', textAlign: 'left' }}>
+                <th style={{ padding: '10px' }}>Member Name</th>
+                <th style={{ padding: '10px' }}>Donations (INR)</th>
+                <th style={{ padding: '10px' }}>Sponsorships (INR)</th>
+                <th style={{ padding: '10px' }}>Cash</th>
+                <th style={{ padding: '10px' }}>UPI</th>
+                <th style={{ padding: '10px' }}>Bank / Other</th>
+                <th style={{ padding: '10px' }}>Total Collection</th>
               </tr>
             </thead>
             <tbody>
-              {memberSummary.map((m) => (
-                <tr key={m.id}>
-                  <td style={{ fontWeight: '700' }}>{m.member_name}</td>
-                  <td>{m.username}</td>
-                  <td>{m.donations_count}</td>
-                  <td>{m.sponsorships_count}</td>
-                  <td style={{ fontWeight: '800', color: '#6b0000' }}>
-                    ₹{m.total_collection?.toLocaleString('en-IN')}
+              {memberWiseData.map((m) => (
+                <tr key={m._id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '10px', fontWeight: 'bold' }}>{m.collected_by_name || 'Member'}</td>
+                  <td style={{ padding: '10px', color: '#8b0000' }}>₹{m.donations_amount?.toLocaleString('en-IN')}</td>
+                  <td style={{ padding: '10px', color: '#2e7d32' }}>₹{m.sponsorships_amount?.toLocaleString('en-IN')}</td>
+                  <td style={{ padding: '10px' }}>₹{m.cash_amount?.toLocaleString('en-IN')}</td>
+                  <td style={{ padding: '10px' }}>₹{m.upi_amount?.toLocaleString('en-IN')}</td>
+                  <td style={{ padding: '10px' }}>₹{(m.bank_transfer_amount + m.other_amount)?.toLocaleString('en-IN')}</td>
+                  <td style={{ padding: '10px', fontWeight: 'bold', fontSize: '1.05rem', color: '#8b0000' }}>
+                    ₹{m.total_collection?.toLocaleString('en-IN')} ({m.receipts_count} Receipts)
                   </td>
                 </tr>
               ))}
@@ -116,102 +140,129 @@ export default function AdminReports({ onViewReceipt }) {
       </div>
 
       {/* SECTION 2: FILTERABLE REPORTS & CSV EXPORT */}
-      <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">
-            <Filter color="#e65100" /> Custom Filtered Report & Export
+      <div className="card" style={{ background: '#fff', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.06)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+          <h3 style={{ color: '#8b0000', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Filter color="#8b0000" size={20} /> Custom Filtered Report & Export
           </h3>
-          <button onClick={handleExportCSV} className="btn btn-success">
+          <button
+            onClick={handleExportCSV}
+            style={{
+              background: '#2e7d32',
+              color: '#fff',
+              border: 'none',
+              padding: '10px 18px',
+              borderRadius: '8px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
             <Download size={18} /> Export Filtered CSV
           </button>
         </div>
 
-        {/* Filter Controls */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem', background: '#fff8e7', padding: '1rem', borderRadius: '10px', border: '1px solid #ebd7a3' }}>
+        {/* Filter Controls Grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '20px', background: '#fff8e7', padding: '16px', borderRadius: '10px', border: '1px solid #ebd7a3' }}>
           <div>
-            <label className="form-label" style={{ fontSize: '0.8rem' }}>Date From</label>
-            <input type="date" className="form-control" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ padding: '0.4rem' }} />
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Festival Year</label>
+            <select value={selectedFestival} onChange={(e) => setSelectedFestival(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }}>
+              <option value="">All Festivals</option>
+              {festivals.map(f => (
+                <option key={f._id} value={f._id}>{f.name}</option>
+              ))}
+            </select>
           </div>
+
           <div>
-            <label className="form-label" style={{ fontSize: '0.8rem' }}>Date To</label>
-            <input type="date" className="form-control" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ padding: '0.4rem' }} />
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Date From</label>
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
           </div>
+
           <div>
-            <label className="form-label" style={{ fontSize: '0.8rem' }}>Receipt Type</label>
-            <select className="form-control" value={receiptType} onChange={(e) => setReceiptType(e.target.value)} style={{ padding: '0.4rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Date To</label>
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }} />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Receipt Type</label>
+            <select value={receiptType} onChange={(e) => setReceiptType(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }}>
               <option value="">All Types</option>
               <option value="donation">Donations Only</option>
               <option value="sponsorship">Sponsorships Only</option>
             </select>
           </div>
+
           <div>
-            <label className="form-label" style={{ fontSize: '0.8rem' }}>Payment Mode</label>
-            <select className="form-control" value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} style={{ padding: '0.4rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Payment Mode</label>
+            <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }}>
               <option value="">All Modes</option>
-              <option value="Cash">Cash</option>
-              <option value="UPI">UPI</option>
-              <option value="Bank Transfer">Bank Transfer</option>
-              <option value="Other">Other</option>
+              <option value="cash">Cash</option>
+              <option value="upi">UPI</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="other">Other</option>
             </select>
           </div>
+
           <div>
-            <label className="form-label" style={{ fontSize: '0.8rem' }}>Collector</label>
-            <select className="form-control" value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} style={{ padding: '0.4rem' }}>
-              <option value="">All Collectors</option>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, marginBottom: '4px' }}>Collector Member</label>
+            <select value={selectedMember} onChange={(e) => setSelectedMember(e.target.value)} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #ccc' }}>
+              <option value="">All Members</option>
               {members.map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
+                <option key={m._id} value={m._id}>{m.name}</option>
               ))}
             </select>
           </div>
         </div>
 
         {/* Filter Summary Banner */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', padding: '0.5rem 0.75rem', background: '#fff', border: '1px solid #ebd7a3', borderRadius: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '12px', background: '#fff', border: '1px solid #ebd7a3', borderRadius: '8px' }}>
           <span style={{ fontSize: '0.9rem', color: '#666' }}>Showing <strong>{transactions.length}</strong> matching transaction records</span>
-          <span style={{ fontSize: '1.1rem', fontWeight: '800', color: '#6b0000' }}>
-            Total Filtered Sum: ₹{totalFilteredAmount.toLocaleString('en-IN')}
+          <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#8b0000' }}>
+            Filtered Total: ₹{totalFilteredAmount.toLocaleString('en-IN')}
           </span>
         </div>
 
         {/* Filtered Table */}
         {loading ? (
-          <p style={{ textAlign: 'center', padding: '1.5rem', color: '#666' }}>Loading filtered transactions...</p>
+          <p style={{ textAlign: 'center', padding: '24px', color: '#666' }}>Loading filtered transactions...</p>
         ) : (
-          <div className="table-responsive">
-            <table className="table">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
               <thead>
-                <tr>
-                  <th>Receipt No</th>
-                  <th>Donor</th>
-                  <th>Mobile</th>
-                  <th>Type</th>
-                  <th>Amount / Details</th>
-                  <th>Payment</th>
-                  <th>Collected By</th>
-                  <th>Date</th>
-                  <th>Action</th>
+                <tr style={{ background: '#fff8e7', borderBottom: '2px solid #ebd7a3', textAlign: 'left' }}>
+                  <th style={{ padding: '10px' }}>Receipt No</th>
+                  <th style={{ padding: '10px' }}>Donor</th>
+                  <th style={{ padding: '10px' }}>Type</th>
+                  <th style={{ padding: '10px' }}>Amount / Details</th>
+                  <th style={{ padding: '10px' }}>Payment</th>
+                  <th style={{ padding: '10px' }}>Collected By</th>
+                  <th style={{ padding: '10px' }}>Date</th>
+                  <th style={{ padding: '10px' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {transactions.map((t) => (
-                  <tr key={t.id}>
-                    <td style={{ fontWeight: '700', color: '#e65100' }}>{t.receipt_number}</td>
-                    <td style={{ fontWeight: '600' }}>{t.donor_name}</td>
-                    <td>{t.donor_mobile}</td>
-                    <td style={{ textTransform: 'capitalize' }}>{t.receipt_type}</td>
-                    <td style={{ fontWeight: '700' }}>
-                      {t.receipt_type === 'donation' ? `₹${t.amount?.toLocaleString('en-IN')}` : t.sponsorship_details}
+                  <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
+                    <td style={{ padding: '10px', fontWeight: 'bold', color: '#8b0000' }}>{t.receipt_number}</td>
+                    <td style={{ padding: '10px', fontWeight: '600' }}>{t.donor?.name || 'Devotee'}</td>
+                    <td style={{ padding: '10px', textTransform: 'capitalize' }}>{t.receipt_type}</td>
+                    <td style={{ padding: '10px', fontWeight: 'bold' }}>
+                      ₹{t.amount?.toLocaleString('en-IN')}
                     </td>
-                    <td>{t.payment_mode}</td>
-                    <td>{t.collected_by}</td>
-                    <td style={{ color: '#666' }}>{t.transaction_date}</td>
-                    <td>
+                    <td style={{ padding: '10px', textTransform: 'uppercase' }}>{t.payment_mode}</td>
+                    <td style={{ padding: '10px' }}>{t.collected_by_name}</td>
+                    <td style={{ padding: '10px', color: '#666', fontSize: '0.85rem' }}>
+                      {new Date(t.transaction_date).toLocaleDateString()}
+                    </td>
+                    <td style={{ padding: '10px' }}>
                       <button 
-                        onClick={() => onViewReceipt(t.id)}
-                        className="btn btn-secondary"
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }}
+                        onClick={() => onViewReceipt(t._id)}
+                        style={{ background: '#8b0000', color: '#fff', border: 'none', padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem' }}
                       >
-                        <Eye size={14} /> Receipt
+                        <Eye size={12} style={{ display: 'inline', marginRight: 2 }} /> Receipt
                       </button>
                     </td>
                   </tr>

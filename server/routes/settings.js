@@ -1,138 +1,201 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const db = require('../db');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const upload = require('../middleware/upload');
-const { logAudit } = require('../utils/audit');
+const { CommitteeSettings, AuditLog } = require('../mongo');
+const { authenticateToken, requireRole } = require('../middleware/authMiddleware');
 
-// GET /api/settings - Public or Authenticated
-router.get('/', (req, res) => {
-  const settings = db.prepare('SELECT * FROM committee_settings WHERE id = 1').get();
-  res.json(settings || {});
-});
+// Memory storage for logo and group photo uploads (stored directly in MongoDB as Base64 Data URLs)
+const storage = multer.memoryStorage();
 
-// PUT /api/settings - Update committee information & prefix (Admin only)
-router.put('/', authenticateToken, requireAdmin, (req, res) => {
-  const {
-    committee_name,
-    festival_name,
-    festival_year,
-    address,
-    village_city,
-    contact_number,
-    whatsapp_number,
-    email,
-    website,
-    committee_members,
-    thank_you_message,
-    footer_message,
-    receipt_prefix
-  } = req.body;
-
-  const current = db.prepare('SELECT * FROM committee_settings WHERE id = 1').get();
-
-  db.prepare(`
-    UPDATE committee_settings SET
-      committee_name = ?,
-      festival_name = ?,
-      festival_year = ?,
-      address = ?,
-      village_city = ?,
-      contact_number = ?,
-      whatsapp_number = ?,
-      email = ?,
-      website = ?,
-      committee_members = ?,
-      thank_you_message = ?,
-      footer_message = ?,
-      receipt_prefix = ?
-    WHERE id = 1
-  `).run(
-    committee_name !== undefined ? committee_name : current.committee_name,
-    festival_name !== undefined ? festival_name : current.festival_name,
-    festival_year !== undefined ? festival_year : current.festival_year,
-    address !== undefined ? address : current.address,
-    village_city !== undefined ? village_city : current.village_city,
-    contact_number !== undefined ? contact_number : current.contact_number,
-    whatsapp_number !== undefined ? whatsapp_number : current.whatsapp_number,
-    email !== undefined ? email : current.email,
-    website !== undefined ? website : current.website,
-    committee_members !== undefined ? committee_members : current.committee_members,
-    thank_you_message !== undefined ? thank_you_message : current.thank_you_message,
-    footer_message !== undefined ? footer_message : current.footer_message,
-    receipt_prefix !== undefined ? receipt_prefix.trim() : current.receipt_prefix
-  );
-
-  logAudit(db, req.user.id, null, 'UPDATE_SETTINGS', current, req.body);
-
-  const updated = db.prepare('SELECT * FROM committee_settings WHERE id = 1').get();
-  res.json({ message: 'Settings updated successfully', settings: updated });
-});
-
-// POST /api/settings/upload-logo
-router.post('/upload-logo', authenticateToken, requireAdmin, upload.single('logo'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No logo image file provided' });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    if (allowed.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid image format. Allowed: PNG, JPG, JPEG, WEBP'));
+    }
   }
-
-  const logoUrl = `/uploads/${req.file.filename}`;
-  db.prepare('UPDATE committee_settings SET logo = ? WHERE id = 1').run(logoUrl);
-
-  logAudit(db, req.user.id, null, 'UPLOAD_LOGO', null, { logoUrl });
-
-  res.json({ message: 'Logo uploaded successfully', logoUrl });
 });
 
-// DELETE /api/settings/logo
-router.delete('/logo', authenticateToken, requireAdmin, (req, res) => {
-  db.prepare("UPDATE committee_settings SET logo = '' WHERE id = 1").run();
-  logAudit(db, req.user.id, null, 'REMOVE_LOGO', null, null);
-
-  // Sync to MongoDB if configured
+// GET /api/settings (All authenticated users can view settings for rendering receipts)
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { CommitteeSettings } = require('../mongo');
-    CommitteeSettings.findOneAndUpdate({}, { logo: '' }, { upsert: true }).exec();
-  } catch (err) {}
-
-  const updated = db.prepare('SELECT * FROM committee_settings WHERE id = 1').get();
-  res.json({ message: 'Logo removed successfully', logoUrl: '', settings: updated });
-});
-
-// POST /api/settings/upload-photo (Committee Group Photo)
-router.post('/upload-photo', authenticateToken, requireAdmin, upload.single('group_photo'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No group photo image file provided' });
+    let settings = await CommitteeSettings.findOne();
+    if (!settings) {
+      settings = await CommitteeSettings.create({});
+    }
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch settings.' });
   }
-
-  const photoUrl = `/uploads/${req.file.filename}`;
-  db.prepare('UPDATE committee_settings SET group_photo = ? WHERE id = 1').run(photoUrl);
-
-  logAudit(db, req.user.id, null, 'UPLOAD_GROUP_PHOTO', null, { photoUrl });
-
-  // Sync to MongoDB if configured
-  try {
-    const { CommitteeSettings } = require('../mongo');
-    CommitteeSettings.findOneAndUpdate({}, { group_photo: photoUrl }, { upsert: true }).exec();
-  } catch (err) {}
-
-  res.json({ message: 'Committee group photo uploaded successfully', photoUrl });
 });
 
-// DELETE /api/settings/photo
-router.delete('/photo', authenticateToken, requireAdmin, (req, res) => {
-  db.prepare("UPDATE committee_settings SET group_photo = '' WHERE id = 1").run();
-  logAudit(db, req.user.id, null, 'REMOVE_GROUP_PHOTO', null, null);
+// Admin endpoints below
+router.use(authenticateToken, requireRole('admin'));
 
-  // Sync to MongoDB if configured
+// PUT /api/settings (Update Committee Info & Receipt Number Config)
+router.put('/', async (req, res) => {
   try {
-    const { CommitteeSettings } = require('../mongo');
-    CommitteeSettings.findOneAndUpdate({}, { group_photo: '' }, { upsert: true }).exec();
-  } catch (err) {}
+    let settings = await CommitteeSettings.findOne();
+    const oldSettings = settings ? settings.toObject() : {};
 
-  const updated = db.prepare('SELECT * FROM committee_settings WHERE id = 1').get();
-  res.json({ message: 'Group photo removed successfully', photoUrl: '', settings: updated });
+    const {
+      committee_name,
+      festival_name,
+      festival_year,
+      address,
+      village_city,
+      contact_number,
+      whatsapp_number,
+      email,
+      website,
+      committee_members,
+      thank_you_message,
+      footer_message,
+      receipt_number_config,
+      logo,
+      group_photo
+    } = req.body;
+
+    if (settings) {
+      if (committee_name !== undefined) settings.committee_name = committee_name;
+      if (festival_name !== undefined) settings.festival_name = festival_name;
+      if (festival_year !== undefined) settings.festival_year = festival_year;
+      if (address !== undefined) settings.address = address;
+      if (village_city !== undefined) settings.village_city = village_city;
+      if (contact_number !== undefined) settings.contact_number = contact_number;
+      if (whatsapp_number !== undefined) settings.whatsapp_number = whatsapp_number;
+      if (email !== undefined) settings.email = email;
+      if (website !== undefined) settings.website = website;
+      if (committee_members !== undefined) settings.committee_members = committee_members;
+      if (thank_you_message !== undefined) settings.thank_you_message = thank_you_message;
+      if (footer_message !== undefined) settings.footer_message = footer_message;
+      if (receipt_number_config !== undefined) settings.receipt_number_config = receipt_number_config;
+      if (logo !== undefined) settings.logo = { ...settings.logo, ...logo };
+      if (group_photo !== undefined) settings.group_photo = { ...settings.group_photo, ...group_photo };
+
+      await settings.save();
+    } else {
+      settings = await CommitteeSettings.create(req.body);
+    }
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'UPDATE_COMMITTEE_SETTINGS',
+      entity_type: 'CommitteeSettings',
+      entity_id: settings._id,
+      old_value: oldSettings,
+      new_value: settings
+    });
+
+    res.json(settings);
+  } catch (err) {
+    console.error('Update settings error:', err);
+    res.status(500).json({ error: 'Failed to update settings.' });
+  }
+});
+
+// POST /api/settings/logo (Upload Logo to MongoDB)
+router.post('/logo', upload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded.' });
+    }
+
+    const base64Data = req.file.buffer.toString('base64');
+    const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
+
+    let settings = await CommitteeSettings.findOne();
+    if (!settings) {
+      settings = await CommitteeSettings.create({});
+    }
+
+    settings.logo = {
+      ...settings.logo,
+      url: dataUrl,
+      public_id: req.file.originalname,
+      enabled: true
+    };
+    await settings.save();
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'UPLOAD_LOGO',
+      entity_type: 'CommitteeSettings',
+      new_value: { public_id: req.file.originalname }
+    });
+
+    res.json({ message: 'Logo uploaded and saved to database successfully.', logo: settings.logo });
+  } catch (err) {
+    res.status(500).json({ error: 'Logo upload failed: ' + err.message });
+  }
+});
+
+// POST /api/settings/group-photo (Upload Group Photo to MongoDB)
+router.post('/group-photo', upload.single('group_photo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image file uploaded.' });
+    }
+
+    const base64Data = req.file.buffer.toString('base64');
+    const dataUrl = `data:${req.file.mimetype};base64,${base64Data}`;
+
+    let settings = await CommitteeSettings.findOne();
+    if (!settings) {
+      settings = await CommitteeSettings.create({});
+    }
+
+    settings.group_photo = {
+      ...settings.group_photo,
+      url: dataUrl,
+      public_id: req.file.originalname,
+      enabled: true
+    };
+    await settings.save();
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'UPLOAD_GROUP_PHOTO',
+      entity_type: 'CommitteeSettings',
+      new_value: { public_id: req.file.originalname }
+    });
+
+    res.json({ message: 'Group photo uploaded and saved to database successfully.', group_photo: settings.group_photo });
+  } catch (err) {
+    res.status(500).json({ error: 'Group photo upload failed: ' + err.message });
+  }
+});
+
+// POST /api/settings/remove-image
+router.post('/remove-image', async (req, res) => {
+  try {
+    const { type } = req.body; // 'logo' or 'group_photo'
+    let settings = await CommitteeSettings.findOne();
+    if (!settings) {
+      return res.status(404).json({ error: 'Settings not found.' });
+    }
+
+    if (type === 'logo') {
+      settings.logo.url = '';
+      settings.logo.public_id = '';
+      settings.logo.enabled = false;
+    } else if (type === 'group_photo') {
+      settings.group_photo.url = '';
+      settings.group_photo.public_id = '';
+      settings.group_photo.enabled = false;
+    }
+
+    await settings.save();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to remove image.' });
+  }
 });
 
 module.exports = router;

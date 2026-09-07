@@ -1,124 +1,208 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const db = require('../db');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const { logAudit } = require('../utils/audit');
+const { User, Transaction, AuditLog } = require('../mongo');
+const { authenticateToken, requireRole } = require('../middleware/authMiddleware');
 
-const { sanitizeText } = require('../middleware/validation');
+router.use(authenticateToken, requireRole('admin'));
 
-// All routes here require Admin role
-router.use(authenticateToken, requireAdmin);
+// GET /api/members
+router.get('/', async (req, res) => {
+  try {
+    const members = await User.find({ role: 'collection_member' }).sort({ created_at: -1 });
 
-// GET /api/members - list all collection members & admins
-router.get('/', (req, res) => {
-  const users = db.prepare(`
-    SELECT id, name, username, role, status, created_at,
-    (SELECT COUNT(*) FROM transactions WHERE collection_member_id = users.id) AS total_collections,
-    (SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE collection_member_id = users.id AND receipt_type = 'donation') AS total_donations_amount
-    FROM users
-    ORDER BY created_at DESC
-  `).all();
+    // Aggregate statistics per member
+    const memberStats = await Transaction.aggregate([
+      { $match: { status: 'active' } },
+      {
+        $group: {
+          _id: '$collection_member_id',
+          total_donation_amount: {
+            $sum: { $cond: [{ $eq: ['$receipt_type', 'donation'] }, '$amount', 0] }
+          },
+          total_sponsorship_amount: {
+            $sum: { $cond: [{ $eq: ['$receipt_type', 'sponsorship'] }, '$amount', 0] }
+          },
+          total_amount: { $sum: '$amount' },
+          donation_count: {
+            $sum: { $cond: [{ $eq: ['$receipt_type', 'donation'] }, 1, 0] }
+          },
+          sponsorship_count: {
+            $sum: { $cond: [{ $eq: ['$receipt_type', 'sponsorship'] }, 1, 0] }
+          },
+          receipts_count: { $sum: 1 }
+        }
+      }
+    ]);
 
-  res.json(users);
+    const statsMap = {};
+    memberStats.forEach(stat => {
+      statsMap[stat._id.toString()] = stat;
+    });
+
+    const result = members.map(m => {
+      const stat = statsMap[m._id.toString()] || {};
+      return {
+        _id: m._id,
+        id: m._id,
+        name: m.name,
+        username: m.username,
+        mobile: m.mobile,
+        status: m.status,
+        last_login_at: m.last_login_at,
+        created_at: m.created_at,
+        total_donation_amount: stat.total_donation_amount || 0,
+        total_sponsorship_amount: stat.total_sponsorship_amount || 0,
+        total_amount: stat.total_amount || 0,
+        donation_count: stat.donation_count || 0,
+        sponsorship_count: stat.sponsorship_count || 0,
+        receipts_count: stat.receipts_count || 0
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Fetch members error:', err);
+    res.status(500).json({ error: 'Failed to fetch members.' });
+  }
 });
 
-// POST /api/members - create new member
-router.post('/', (req, res) => {
-  const { name, username, password, role } = req.body;
+// POST /api/members
+router.post('/', async (req, res) => {
+  try {
+    const { name, username, password, mobile } = req.body;
 
-  if (!name || !username || !password) {
-    return res.status(400).json({ error: 'Name, username, and password are required' });
+    if (!name || !username || !password) {
+      return res.status(400).json({ error: 'Name, username, and password are required.' });
+    }
+
+    const cleanUsername = username.trim().toLowerCase();
+    const existing = await User.findOne({ username: cleanUsername });
+    if (existing) {
+      return res.status(400).json({ error: 'Username already exists.' });
+    }
+
+    const password_hash = bcrypt.hashSync(password, 10);
+    const newMember = await User.create({
+      name: name.trim(),
+      username: cleanUsername,
+      password_hash,
+      role: 'collection_member',
+      mobile: mobile ? mobile.trim() : '',
+      status: 'active'
+    });
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'CREATE_COLLECTION_MEMBER',
+      entity_type: 'User',
+      entity_id: newMember._id,
+      new_value: { name, username: cleanUsername, mobile }
+    });
+
+    res.json({
+      _id: newMember._id,
+      id: newMember._id,
+      name: newMember.name,
+      username: newMember.username,
+      mobile: newMember.mobile,
+      status: newMember.status,
+      created_at: newMember.created_at
+    });
+  } catch (err) {
+    console.error('Create member error:', err);
+    res.status(500).json({ error: 'Failed to create collection member.' });
   }
-
-  const cleanName = sanitizeText(name);
-  const cleanUsername = sanitizeText(username).toLowerCase();
-
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(cleanUsername);
-  if (existing) {
-    return res.status(400).json({ error: 'Username already exists' });
-  }
-
-  // Cost factor 12 for bcrypt
-  const passwordHash = bcrypt.hashSync(password, 12);
-  const userRole = role === 'ADMIN' ? 'ADMIN' : 'MEMBER';
-
-  const stmt = db.prepare(`
-    INSERT INTO users (name, username, password_hash, role, status)
-    VALUES (?, ?, ?, ?, 'ACTIVE')
-  `);
-  const result = stmt.run(cleanName, cleanUsername, passwordHash, userRole);
-
-  const newUser = db.prepare('SELECT id, name, username, role, status, created_at FROM users WHERE id = ?').get(result.lastInsertRowid);
-
-  logAudit(db, req.user.id, null, 'CREATE_MEMBER', null, { memberId: newUser.id, name: newUser.name, role: newUser.role });
-
-  res.status(201).json(newUser);
 });
 
-// PUT /api/members/:id - edit member (name, status, role)
-router.put('/:id', (req, res) => {
-  const { id } = req.params;
-  const { name, status, role } = req.body;
+// PUT /api/members/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const { name, mobile, status } = req.body;
+    const oldUser = await User.findById(req.params.id);
 
-  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    return res.status(404).json({ error: 'Member not found' });
+    if (!oldUser) {
+      return res.status(404).json({ error: 'Member not found.' });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      req.params.id,
+      {
+        name: name ? name.trim() : oldUser.name,
+        mobile: mobile !== undefined ? mobile.trim() : oldUser.mobile,
+        status: status || oldUser.status
+      },
+      { new: true }
+    );
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'UPDATE_COLLECTION_MEMBER',
+      entity_type: 'User',
+      entity_id: updatedUser._id,
+      old_value: { name: oldUser.name, status: oldUser.status },
+      new_value: { name: updatedUser.name, status: updatedUser.status }
+    });
+
+    res.json(updatedUser);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update member.' });
   }
-
-  const updatedName = name !== undefined ? sanitizeText(name) : existing.name;
-  const updatedStatus = status !== undefined && ['ACTIVE', 'DISABLED'].includes(status) ? status : existing.status;
-  const updatedRole = role !== undefined && ['ADMIN', 'MEMBER'].includes(role) ? role : existing.role;
-
-  db.prepare(`
-    UPDATE users SET name = ?, status = ?, role = ? WHERE id = ?
-  `).run(updatedName, updatedStatus, updatedRole, id);
-
-  logAudit(db, req.user.id, null, 'UPDATE_MEMBER', existing, { id, name: updatedName, status: updatedStatus, role: updatedRole });
-
-  res.json({ message: 'Member updated successfully' });
 });
 
-// PUT /api/members/:id/reset-password
-router.put('/:id/reset-password', (req, res) => {
-  const { id } = req.params;
-  const { newPassword } = req.body;
+// POST /api/members/:id/status
+router.post('/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['active', 'disabled'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid status value.' });
+    }
 
-  if (!newPassword || newPassword.length < 4) {
-    return res.status(400).json({ error: 'Password must be at least 4 characters long' });
+    const user = await User.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    if (!user) {
+      return res.status(404).json({ error: 'Member not found.' });
+    }
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'TOGGLE_MEMBER_STATUS',
+      entity_type: 'User',
+      entity_id: user._id,
+      new_value: { status }
+    });
+
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to toggle member status.' });
   }
-
-  const existing = db.prepare('SELECT id, name FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    return res.status(404).json({ error: 'Member not found' });
-  }
-
-  // Cost factor 12 for bcrypt
-  const passwordHash = bcrypt.hashSync(newPassword, 12);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(passwordHash, id);
-
-  logAudit(db, req.user.id, null, 'RESET_PASSWORD', null, { targetUserId: id });
-
-  res.json({ message: `Password reset successfully for ${existing.name}` });
 });
 
-// DELETE /api/members/:id - delete member account
-router.delete('/:id', (req, res) => {
-  const { id } = req.params;
+// POST /api/members/:id/reset-password
+router.post('/:id/reset-password', async (req, res) => {
+  try {
+    const { new_password } = req.body;
+    if (!new_password) {
+      return res.status(400).json({ error: 'New password is required.' });
+    }
 
-  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    return res.status(404).json({ error: 'Member not found' });
+    const password_hash = bcrypt.hashSync(new_password, 10);
+    const user = await User.findByIdAndUpdate(req.params.id, { password_hash }, { new: true });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Member not found.' });
+    }
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'RESET_MEMBER_PASSWORD',
+      entity_type: 'User',
+      entity_id: user._id
+    });
+
+    res.json({ message: 'Password reset successfully.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to reset password.' });
   }
-
-  if (existing.id === req.user.id) {
-    return res.status(400).json({ error: 'You cannot delete your own logged-in admin account' });
-  }
-
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  logAudit(db, req.user.id, null, 'DELETE_MEMBER', existing, { id, name: existing.name });
-
-  res.json({ message: 'Member deleted successfully' });
 });
 
 module.exports = router;

@@ -1,59 +1,77 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
-const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const { logAudit } = require('../utils/audit');
+const { ReceiptTemplate, AuditLog } = require('../mongo');
+const { authenticateToken, requireRole } = require('../middleware/authMiddleware');
 
-// GET /api/templates/:type
-router.get('/:type', authenticateToken, (req, res) => {
-  const { type } = req.params;
-  if (!['donation', 'sponsorship'].includes(type)) {
-    return res.status(400).json({ error: 'Invalid template type' });
+// GET /api/templates
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const templates = await ReceiptTemplate.find({ is_active: true });
+    res.json(templates);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch receipt templates.' });
   }
-
-  const row = db.prepare('SELECT * FROM receipt_templates WHERE receipt_type = ?').get(type);
-  if (!row) {
-    return res.status(404).json({ error: 'Template not found' });
-  }
-
-  res.json({
-    id: row.id,
-    receipt_type: row.receipt_type,
-    template_data: JSON.parse(row.template_data),
-    updated_at: row.updated_at
-  });
 });
 
-// PUT /api/templates/:type (Admin only)
-router.put('/:type', authenticateToken, requireAdmin, (req, res) => {
-  const { type } = req.params;
-  const { template_data } = req.body;
-
-  if (!['donation', 'sponsorship'].includes(type)) {
-    return res.status(400).json({ error: 'Invalid template type' });
+// GET /api/templates/:type
+router.get('/:type', authenticateToken, async (req, res) => {
+  try {
+    const type = req.params.type.toLowerCase();
+    const template = await ReceiptTemplate.findOne({ receipt_type: type, is_active: true });
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found for type: ' + type });
+    }
+    res.json(template);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch template.' });
   }
+});
 
-  if (!template_data) {
-    return res.status(400).json({ error: 'template_data object is required' });
+// Admin endpoints below
+router.use(authenticateToken, requireRole('admin'));
+
+// PUT /api/templates/:type (Update template design & fields with template version incrementing)
+router.put('/:type', async (req, res) => {
+  try {
+    const type = req.params.type.toLowerCase();
+    const { template_name, design, fields } = req.body;
+
+    let template = await ReceiptTemplate.findOne({ receipt_type: type, is_active: true });
+    const oldVersion = template ? template.version : 0;
+    const newVersion = oldVersion + 1;
+
+    if (template) {
+      template.version = newVersion;
+      if (template_name) template.template_name = template_name;
+      if (design) template.design = { ...template.design, ...design };
+      if (fields) template.fields = fields;
+      template.updated_by = req.user._id;
+      await template.save();
+    } else {
+      template = await ReceiptTemplate.create({
+        receipt_type: type,
+        template_name: template_name || `${type.toUpperCase()} Receipt Template`,
+        version: 1,
+        is_active: true,
+        design,
+        fields,
+        updated_by: req.user._id
+      });
+    }
+
+    await AuditLog.create({
+      user_id: req.user._id,
+      action: 'UPDATE_RECEIPT_TEMPLATE',
+      entity_type: 'ReceiptTemplate',
+      entity_id: template._id,
+      new_value: { receipt_type: type, version: template.version }
+    });
+
+    res.json(template);
+  } catch (err) {
+    console.error('Update template error:', err);
+    res.status(500).json({ error: 'Failed to update receipt template.' });
   }
-
-  const existing = db.prepare('SELECT * FROM receipt_templates WHERE receipt_type = ?').get(type);
-
-  const jsonStr = typeof template_data === 'string' ? template_data : JSON.stringify(template_data);
-
-  if (existing) {
-    db.prepare(`
-      UPDATE receipt_templates SET template_data = ?, updated_at = DATETIME('now') WHERE receipt_type = ?
-    `).run(jsonStr, type);
-  } else {
-    db.prepare(`
-      INSERT INTO receipt_templates (receipt_type, template_data) VALUES (?, ?)
-    `).run(type, jsonStr);
-  }
-
-  logAudit(db, req.user.id, null, 'UPDATE_RECEIPT_TEMPLATE', existing ? JSON.parse(existing.template_data) : null, template_data);
-
-  res.json({ message: `${type} receipt template saved successfully` });
 });
 
 module.exports = router;

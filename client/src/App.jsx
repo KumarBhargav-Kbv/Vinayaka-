@@ -6,6 +6,7 @@ import MemberCollection from './pages/MemberCollection';
 import MemberHistory from './pages/MemberHistory';
 import ReceiptView from './pages/ReceiptView';
 import AdminDashboard from './pages/AdminDashboard';
+import AdminFestivals from './pages/AdminFestivals';
 import AdminMembers from './pages/AdminMembers';
 import AdminDonors from './pages/AdminDonors';
 import AdminReceiptDesigner from './pages/AdminReceiptDesigner';
@@ -24,7 +25,7 @@ function MainApp() {
     return (
       <div style={{
         minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: '#6b0000', color: '#ffe699', fontFamily: 'Cinzel, serif', fontSize: '1.5rem'
+        background: '#8b0000', color: '#ffe699', fontFamily: 'Cinzel, serif', fontSize: '1.5rem'
       }}>
         🪔 Initializing Vinayaka Chavithi Portal...
       </div>
@@ -32,7 +33,7 @@ function MainApp() {
   }
 
   if (!user) {
-    return <Login onLoginSuccess={(u) => setCurrentPath(u.role === 'ADMIN' ? '/admin/dashboard' : '/collection')} />;
+    return <Login onLoginSuccess={(u) => setCurrentPath(u.role?.toLowerCase() === 'admin' ? '/admin/dashboard' : '/collection')} />;
   }
 
   const handleTransactionCreated = (id) => {
@@ -63,6 +64,9 @@ function MainApp() {
 
       case '/admin/dashboard':
         return isAdmin ? <AdminDashboard onViewReceipt={handleViewReceipt} /> : <MemberCollection onTransactionCreated={handleTransactionCreated} />;
+
+      case '/admin/festivals':
+        return isAdmin ? <AdminFestivals /> : <MemberCollection onTransactionCreated={handleTransactionCreated} />;
 
       case '/admin/members':
         return isAdmin ? <AdminMembers /> : <MemberCollection onTransactionCreated={handleTransactionCreated} />;
