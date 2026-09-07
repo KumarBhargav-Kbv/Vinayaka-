@@ -3,6 +3,8 @@ const cors = require('cors');
 const path = require('path');
 const dotenv = require('dotenv');
 
+// Load environment variables from root or local .env
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 dotenv.config();
 
 const app = express();
@@ -14,12 +16,15 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Initialize MongoDB Atlas connection & seeding
-if (process.env.MONGODB_URI) {
-  const { initMongo } = require('./mongo');
-  initMongo(process.env.MONGODB_URI);
-} else {
-  console.warn('[Server Warning] MONGODB_URI is not set in environment.');
+const DEFAULT_MONGODB_URI = 'mongodb+srv://vasakumarbhargav_db_user:99519663%40Kb@cluster0.m6dsgwm.mongodb.net/vinayaka_db?retryWrites=true&w=majority';
+let mongoUri = process.env.MONGODB_URI;
+
+if (!mongoUri || mongoUri.includes('YOUR_CLUSTER')) {
+  mongoUri = DEFAULT_MONGODB_URI;
 }
+
+const { initMongo } = require('./mongo');
+initMongo(mongoUri);
 
 // Serve static uploaded files (Logo & Group Photos)
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));

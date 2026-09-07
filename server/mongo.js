@@ -11,14 +11,16 @@ const CommitteeSettings = require('./models/CommitteeSettings');
 const ReceiptCounter = require('./models/ReceiptCounter');
 const AuditLog = require('./models/AuditLog');
 
+const DEFAULT_URI = 'mongodb+srv://vasakumarbhargav_db_user:99519663%40Kb@cluster0.m6dsgwm.mongodb.net/vinayaka_db?retryWrites=true&w=majority';
+
 async function initMongo(uri) {
-  if (!uri) {
-    console.warn('[MongoDB] MONGODB_URI is not provided in environment variables.');
-    return;
+  let targetUri = uri;
+  if (!targetUri || targetUri.includes('YOUR_CLUSTER')) {
+    targetUri = DEFAULT_URI;
   }
 
   try {
-    await mongoose.connect(uri);
+    await mongoose.connect(targetUri);
     console.log('[MongoDB] Connected successfully to MongoDB Atlas!');
 
     // 1. Seed Active Festival if none exists
