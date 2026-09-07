@@ -85,7 +85,10 @@ const ReceiptDelivery = mongoose.model('ReceiptDelivery', ReceiptDeliverySchema)
 const AuditLog = mongoose.model('AuditLog', AuditLogSchema);
 
 async function initMongo(uri) {
-  if (!uri) return;
+  if (!uri || uri.includes('YOUR_CLUSTER') || uri.includes('YOUR_USERNAME')) {
+    console.log('[MongoDB Atlas] Skipping MongoDB connection because placeholder URI was detected or URI is not set.');
+    return;
+  }
   try {
     await mongoose.connect(uri);
     console.log('[MongoDB Atlas] Connected successfully!');
